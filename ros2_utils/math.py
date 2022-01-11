@@ -4,10 +4,10 @@ from enum import IntEnum, auto
 
 
 class AxesFrame(IntEnum):
-    LHAND=0  # x fwd, y right, z up
-    RHAND=auto()  # x fwd, y left, z up
-    ULHAND=auto()  # upside down left, x fwd, y right, z down
-    URHAND=auto()  # upside down right, x fwd, y right, z down
+    LHAND=0  # x fwd, y right, z up, cw pos
+    RHAND=auto()  # x fwd, y left, z up, ccw pos
+    ULHAND=auto()  # upside down left, x fwd, y right, z down, ccw pos
+    URHAND=auto()  # upside down right, x fwd, y right, z down, cw pos
 
 
 def wrap_to_pi(angle):

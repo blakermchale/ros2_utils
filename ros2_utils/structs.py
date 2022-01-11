@@ -48,6 +48,13 @@ class NpVector3(np.ndarray):
             d = {k: v.value for k,v in d.items()}
         return cls.__new__(cls, [d["x"], d["y"], d["z"]])
 
+    @classmethod
+    def ros(cls, msg: Union[Vector3, Point]) -> 'NpVector3':
+        if isinstance(msg, (Vector3, Point)):
+            return cls.xyz(msg.x, msg.y, msg.z)
+        else:
+            raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
+
     @property
     def x(self):
         return self[0]
@@ -104,6 +111,9 @@ class NpVector3(np.ndarray):
         if len(vector3) != 3:
             raise ValueError("must contain 3 values in array.")
 
+    def __str__(self):
+        return f"[{self.x},{self.y},{self.z}]"
+
 
 class NpVector4(np.ndarray):
     def __new__(cls, quat):
@@ -141,7 +151,7 @@ class NpVector4(np.ndarray):
         elif isinstance(msg, Vector3):
             return cls.rpy(msg.x, msg.y, msg.z)
         else:
-            raise Exception(f"Type {type(msg)} is not a supported ROS msg.")
+            raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
 
     @property
     def x(self):
@@ -226,11 +236,23 @@ class NpVector4(np.ndarray):
         if len(quat) != 4:
             raise ValueError("must contain 4 values in array.")
 
+    def __str__(self):  # TODO: should this print quaternion or euler angles
+        return f"[{self.x},{self.y},{self.z},{self.w}]"
+
 
 class NpPose:
     def __init__(self, position: NpVector3, orientation: NpVector4):
         self._position = position
         self._orientation = orientation
+
+    @classmethod
+    def ros(cls, msg: Union[Pose, Transform]) -> 'NpPose':
+        if isinstance(msg, Pose):
+            return cls(NpVector3.ros(msg.position), NpVector4.ros(msg.orientation))
+        if isinstance(msg, Transform):
+            return cls(NpVector3.ros(msg.translation), NpVector4.ros(msg.rotation))
+        else:
+            raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
 
     @property
     def position(self):
@@ -275,11 +297,21 @@ class NpPose:
     def copy(self) -> 'NpPose':
         return NpPose(self.position.copy(), self.orientation.copy())
 
+    def __str__(self):
+        return f"Pose:\n\tPosition:{str(self.position)}\n\tEuler:{str(self.euler)}"
+
 
 class NpTwist:
     def __init__(self, linear: NpVector3, angular: NpVector3):
         self._linear = linear
         self._angular = angular
+
+    @classmethod
+    def ros(cls, msg: Twist) -> 'NpTwist':
+        if isinstance(msg, Twist):
+            return cls(NpVector3.ros(msg.linear), NpVector3.ros(msg.angular))
+        else:
+            raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
 
     @property
     def linear(self):
@@ -337,11 +369,21 @@ class NpTwist:
     def copy(self) -> 'NpTwist':
         return NpTwist(self.linear.copy(), self.angular.copy())
 
-    
+    def __str__(self):
+        return f"Twist:\n\t{str(self.linear)}\n\t{str(self.angular)}"
+
+
 class NpOdometry:
     def __init__(self, pose: NpPose, twist: NpTwist):
         self.pose = pose
         self.twist = twist
+
+    @classmethod
+    def ros(cls, msg: Odometry) -> 'NpOdometry':
+        if isinstance(msg, Odometry):
+            return cls(NpPose.ros(msg.pose.pose), NpTwist.ros(msg.twist.twist))
+        else:
+            raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
 
     @property
     def vx(self):
@@ -395,3 +437,6 @@ class NpOdometry:
 
     def copy(self) -> 'NpOdometry':
         return NpOdometry(self.pose.copy(), self.twist.copy())
+
+    def __str__(self):
+        return f"Odom:\n\t{str(self.pose)}\n\t{str(self.twist)}"
