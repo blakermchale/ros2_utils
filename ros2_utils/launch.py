@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from launch_ros.parameter_descriptions import ParameterFile
 import ast
 import jinja2
 import xacro
 import os
+import yaml
 
 
 def get_launch_arguments(launch_args: list):
@@ -21,10 +23,21 @@ def convert_type(value, atype):
     else: return value
 
 
-def get_local_arguments(launch_args: dict, context):
+def get_local_arguments(launch_args: dict, context, yaml_file: str=""):
     """Stores launch arguments in dictionary using RCL context."""
     validate_launch_args(launch_args)
-    return {param["name"]: convert_type(LaunchConfiguration(param["name"]).perform(context), param.get("type")) for param in launch_args}
+    largs = {param["name"]: convert_type(LaunchConfiguration(param["name"]).perform(context), param.get("type")) for param in launch_args}
+    if yaml_file != "":
+        param_file = ParameterFile(
+            param_file=yaml_file,
+            allow_substs=True)
+        param_file_path = param_file.evaluate(context)
+        with open(param_file_path, 'r') as f:
+            config_vals = yaml.load(f, Loader=yaml.FullLoader)
+        # Overrides passed launch args with config files
+        for k, v in config_vals.items():
+            largs[k] = v  #TODO: make sure this is the proper type
+    return largs
 
 
 def validate_launch_args(launch_args: list):
