@@ -19,6 +19,7 @@ def convert_type(value, atype):
     """Converts string using type identifier."""
     if atype == "int": return int(value)
     elif atype == "bool": return value == "true"
+    elif atype == "float": return float(value)
     elif atype == "list": return ast.literal_eval(value)
     else: return value
 
@@ -36,6 +37,7 @@ def get_local_arguments(launch_args: dict, context, yaml_file: str=""):
             config_vals = yaml.load(f, Loader=yaml.FullLoader)
         # Overrides passed launch args with config files
         for k, v in config_vals.items():
+            # TODO: should we force yaml params to be in the launch args dict
             largs[k] = v  #TODO: make sure this is the proper type
     return largs
 
