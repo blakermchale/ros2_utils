@@ -1,12 +1,12 @@
 from typing import Union
 from .math import convert_axes, AxesFrame
-from geometry_msgs.msg import Pose, Transform, Twist, Point, Vector3, PoseStamped
+from geometry_msgs.msg import Pose, Transform, Twist, Point, Vector3, PoseStamped, Polygon, Point32
 from nav_msgs.msg import Odometry, Path
 from .structs import NpVector4, NpPose, NpVector3, NpTwist
 import numpy as np
 
 
-def convert_axes_from_msg(msg: Union[Pose, Transform, Twist, Odometry, Path], in_axes: AxesFrame, out_axes: AxesFrame):
+def convert_axes_from_msg(msg: Union[Pose, Transform, Twist, Odometry, Path, Polygon], in_axes: AxesFrame, out_axes: AxesFrame):
     """Converts ROS message coordinate frame."""
     if isinstance(msg, Pose):
         q = NpVector4.ros(msg.orientation)
@@ -40,6 +40,13 @@ def convert_axes_from_msg(msg: Union[Pose, Transform, Twist, Odometry, Path], in
             o.header = pose.header
             o.pose = NpPose(NpVector3.xyz(x, y, z), NpVector4.rpy(roll, pitch, yaw)).get_msg()
             out_msg.poses.append(o)
+        return out_msg
+    elif isinstance(msg, Polygon):
+        out_msg = Polygon()
+        for p in msg.points:
+            x, y, z, _, _, _ = convert_axes(p.x, p.y, p.z, 0, 0, 0, in_axes, out_axes)
+            o = Point32(x=x, y=y, z=z)
+            out_msg.points.append(o)
         return out_msg
     else:
         raise ValueError(f"ROS message type {type(msg)} is not supported")
