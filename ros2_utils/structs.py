@@ -1,8 +1,8 @@
-from typing import Union
+from typing import Union, List
 import numpy as np
 from enum import IntEnum, auto
-from geometry_msgs.msg import Point, Vector3, Quaternion, Pose, Twist, Transform
-from nav_msgs.msg import Odometry
+from geometry_msgs.msg import Point, Vector3, Quaternion, Pose, Twist, Transform, PoseStamped
+from nav_msgs.msg import Odometry, Path
 from scipy.spatial.transform import Rotation as R
 from rclpy.parameter import Parameter
 
@@ -37,11 +37,11 @@ class NpVector3(np.ndarray):
         return obj
 
     @classmethod
-    def xyz(cls, x, y, z) -> 'NpVector3':
+    def from_xyz(cls, x, y, z) -> 'NpVector3':
         return cls.__new__(cls, [x, y, z])
 
     @classmethod
-    def dict(cls, d) -> 'NpVector3':
+    def from_dict(cls, d) -> 'NpVector3':
         if len(d.values()) != 3:
             raise Exception("dictionary must be 3 values for x,y,z")
         if isinstance(d["x"], Parameter):
@@ -49,9 +49,9 @@ class NpVector3(np.ndarray):
         return cls.__new__(cls, [d["x"], d["y"], d["z"]])
 
     @classmethod
-    def ros(cls, msg: Union[Vector3, Point]) -> 'NpVector3':
+    def from_ros(cls, msg: Union[Vector3, Point]) -> 'NpVector3':
         if isinstance(msg, (Vector3, Point)):
-            return cls.xyz(msg.x, msg.y, msg.z)
+            return cls.from_xyz(msg.x, msg.y, msg.z)
         else:
             raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
 
@@ -122,34 +122,34 @@ class NpVector4(np.ndarray):
         return obj
 
     @classmethod
-    def xyzw(cls, x, y, z, w) -> 'NpVector4':
+    def from_xyzw(cls, x, y, z, w) -> 'NpVector4':
         """Input quaternion."""
         return cls.__new__(cls, [x, y, z, w])
 
     @classmethod
-    def rpy(cls, x, y, z) -> 'NpVector4':
+    def from_rpy(cls, x, y, z) -> 'NpVector4':
         """Input euler roll, pitch, yaw."""
         return cls.__new__(cls, R.from_euler('xyz', [x, y, z]).as_quat())
 
     @classmethod
-    def dict(cls, d) -> 'NpVector4':
+    def from_dict(cls, d) -> 'NpVector4':
         len_d = len(d.values())
         if isinstance(d["x"], Parameter):
             d = {k: v.value for k,v in d.items()}
         if len_d == 3:
-            return cls.rpy(d["x"], d["y"], d["z"])
+            return cls.from_rpy(d["x"], d["y"], d["z"])
         elif len_d == 4:
             x,y,z,w = d["x"],d["y"],d["z"],d["w"]
-            return cls.xyzw(x, y, z, w)
+            return cls.from_xyzw(x, y, z, w)
         else:
             raise Exception(f"dictionary must be size 3 or 4, not {len_d}")
     
     @classmethod
-    def ros(cls, msg: Union[Quaternion, Vector3]) -> 'NpVector4':
+    def from_ros(cls, msg: Union[Quaternion, Vector3]) -> 'NpVector4':
         if isinstance(msg, Quaternion):
-            return cls.xyzw(msg.x, msg.y, msg.z, msg.w)
+            return cls.from_xyzw(msg.x, msg.y, msg.z, msg.w)
         elif isinstance(msg, Vector3):
-            return cls.rpy(msg.x, msg.y, msg.z)
+            return cls.from_rpy(msg.x, msg.y, msg.z)
         else:
             raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
 
@@ -246,11 +246,11 @@ class NpPose:
         self._orientation = orientation
 
     @classmethod
-    def ros(cls, msg: Union[Pose, Transform]) -> 'NpPose':
+    def from_ros(cls, msg: Union[Pose, Transform]) -> 'NpPose':
         if isinstance(msg, Pose):
-            return cls(NpVector3.ros(msg.position), NpVector4.ros(msg.orientation))
+            return cls(NpVector3.from_ros(msg.position), NpVector4.from_ros(msg.orientation))
         if isinstance(msg, Transform):
-            return cls(NpVector3.ros(msg.translation), NpVector4.ros(msg.rotation))
+            return cls(NpVector3.from_ros(msg.translation), NpVector4.from_ros(msg.rotation))
         else:
             raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
 
@@ -307,9 +307,9 @@ class NpTwist:
         self._angular = angular
 
     @classmethod
-    def ros(cls, msg: Twist) -> 'NpTwist':
+    def from_ros(cls, msg: Twist) -> 'NpTwist':
         if isinstance(msg, Twist):
-            return cls(NpVector3.ros(msg.linear), NpVector3.ros(msg.angular))
+            return cls(NpVector3.from_ros(msg.linear), NpVector3.from_ros(msg.angular))
         else:
             raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
 
@@ -379,9 +379,9 @@ class NpOdometry:
         self.twist = twist
 
     @classmethod
-    def ros(cls, msg: Odometry) -> 'NpOdometry':
+    def from_ros(cls, msg: Odometry) -> 'NpOdometry':
         if isinstance(msg, Odometry):
-            return cls(NpPose.ros(msg.pose.pose), NpTwist.ros(msg.twist.twist))
+            return cls(NpPose.from_ros(msg.pose.pose), NpTwist.from_ros(msg.twist.twist))
         else:
             raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
 
@@ -440,3 +440,60 @@ class NpOdometry:
 
     def __str__(self):
         return f"Odom:\n\t{str(self.pose)}\n\t{str(self.twist)}"
+
+
+class NpPath:
+    def __init__(self, xyz_matrix, rpy_matrix):
+        self.xyz = np.asfarray(xyz_matrix)
+        self.rpy = np.asfarray(rpy_matrix)
+
+    @classmethod
+    def from_ros(cls, msg: Path) -> 'NpPath':
+        if isinstance(msg, Path):
+            xyz_matrix = np.empty((0,3))
+            rpy_matrix = np.empty((0,3))
+            for pose in msg.poses:
+                p = NpPose.from_ros(pose.pose)
+                xyz_matrix = np.vstack((xyz_matrix,p.position.v3))
+                rpy_matrix = np.vstack((rpy_matrix,p.orientation.euler))
+            return cls(xyz_matrix, rpy_matrix)
+        else:
+            raise Exception(f"Type {type(msg)} is not a supported ROS msg for {cls.__name__}.")
+
+    def set_msg(self, value: Path):
+        xyz_matrix = np.empty((0,3))
+        rpy_matrix = np.empty((0,3))
+        for pose in value.poses:
+            p = NpPose.from_ros(pose)
+            xyz_matrix = np.vstack((xyz_matrix,p.position.v3))
+            rpy_matrix = np.vstack((rpy_matrix,p.orientation.euler))
+        self.xyz = xyz_matrix
+        self.rpy = rpy_matrix
+
+    def get_msg(self) -> Odometry:
+        msg = Path()
+        for i in range(self.length):
+            ps = PoseStamped()
+            pose = Pose()
+            pose.position = self.obj_xyz(i).get_point_msg()
+            pose.orientation = self.obj_rpy(i).get_quat_msg()
+            ps.pose = pose
+            msg.poses.append(ps)
+        return msg
+
+    @property
+    def length(self):
+        len_xyz = self.xyz.shape[0]
+        len_rpy = self.rpy.shape[1]
+        if len_xyz != len_rpy:
+            raise ValueError(f"XYZ length {len_xyz} does not match RPY length {len_rpy}")
+        return len_xyz
+
+    def copy(self) -> 'NpPath':
+        return NpPath(self.xyz.copy(), self.rpy.copy())
+
+    def obj_xyz(self, row):
+        return NpVector3(self.xyz[row,:])
+
+    def obj_rpy(self, row):
+        return NpVector4.from_rpy(self.rpy[row,0],self.rpy[row,1],self.rpy[row,2])
