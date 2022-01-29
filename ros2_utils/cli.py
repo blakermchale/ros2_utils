@@ -60,7 +60,6 @@ def setup_send_action(self: Node, action_cli: ActionClient, feedback_cb):
         if action_cli._action_name in self._goal_handles.keys():
             self.get_logger().error(f"`{action_cli._action_name}` is still being sent")
             return
-        self.get_logger().info(f"entities{action_cli.get_num_entities()}")
         self.reset_actions()
         if not action_cli.wait_for_server(timeout_sec=self._timeout_sec):
             self.get_logger().error(f"No action server available for `{action_cli._action_name}`")
