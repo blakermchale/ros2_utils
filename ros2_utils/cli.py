@@ -18,31 +18,42 @@ from cmd2 import Cmd, Cmd2ArgumentParser, with_argparser
 from rclpy.executors import MultiThreadedExecutor
 from enum import IntEnum, auto
 from rclpy.action.client import ActionClient
+import signal
+import numpy as np
+from ros2_utils.ez_node import EzNode
 
 
-class NodeClient(Node):
-    def __init__(self, node_name: str, executor: Executor, **kwargs):
+class NodeClient(EzNode):
+    def __init__(self, node_name: str, executor: Executor, add_to_executor=True, **kwargs):
         super().__init__(node_name, use_global_arguments=False, **kwargs)  #NOTE: need to disable global args to accept namespace from kwargs
         self.namespace = self.get_namespace().split("/")[-1]
 
         # Internal states
-        self._timeout_sec = 10.0
+        self._action_wait_timeout_s = 10.0
         self._waiting_for_gh = False
         self.feedback = None
+        self._initial_gh_timeout_s = 5.0
+        self._last_update_s = np.nan
 
         # Goal handles
         self._goal_handles = {}
 
         self._executor = executor
-        self._executor.add_node(self)
+        if add_to_executor:
+            self._executor.add_node(self)  # TODO(bmchale): this causes client to be a string when called here, maybe we can find a workaround
     
     ########################
     ## Helpers
     ########################
     def reset_actions(self):
         # self._goal_handles = {}
+        self.last_update_s = self.seconds
         self._waiting_for_gh = True
         self.feedback = None
+    
+    def reset_after_fail(self):
+        self.last_update_s = np.nan
+        self._waiting_for_gh = False
 
     def _action_response(self, action_name: str, future: Future):
         goal_handle = future.result()
@@ -54,16 +65,26 @@ class NodeClient(Node):
         self.get_logger().info(f"Goal accepted for '{action_name}'")
 
 
-def setup_send_action(self: Node, action_cli: ActionClient, feedback_cb):
+# ClientObj is child of NodeClient
+def create_client(ClientObj, executor, namespace=None, log_feedback=False) -> NodeClient:
+    client = ClientObj(executor, namespace, log_feedback)
+    executor.add_node(client)
+    return client
+
+
+def setup_send_action(self: NodeClient, action_cli: ActionClient, feedback_cb):
     """Decorator for sending an action with NodeClient."""
     def inner(func):
+        if not isinstance(self, NodeClient):
+            self.get_logger().error(f"Decorator can only accept a `NodeClient` as `self` for `{action_cli._action_name}`")
+            return
         if action_cli._action_name in self._goal_handles.keys():
             self.get_logger().error(f"`{action_cli._action_name}` is still being sent")
             return
-        self.reset_actions()
-        if not action_cli.wait_for_server(timeout_sec=self._timeout_sec):
+        if not action_cli.wait_for_server(timeout_sec=self._action_wait_timeout_s):
             self.get_logger().error(f"No action server available for `{action_cli._action_name}`")
             return
+        self.reset_actions()
         goal = func()
         self.get_logger().info(f"Sending goal to `{action_cli._action_name}`")
         future = action_cli.send_goal_async(goal, feedback_callback=feedback_cb)
@@ -77,13 +98,13 @@ def setup_send_action(self: Node, action_cli: ActionClient, feedback_cb):
 # https://pypi.org/project/cmd2/
 class ClientShell(Cmd):
     """Generic client shell that handles cancelling actions. Assumes field `self.client` is set to a child of `NodeClient`."""
-    def __init__(self, name, ClientObj: NodeClient, **kwargs) -> None:
+    def __init__(self, name: str, ClientObj: NodeClient, **kwargs) -> None:
         # print(kwargs)
         super().__init__(**kwargs)
         self.ClientObj = ClientObj
         client = self.ClientObj(MultiThreadedExecutor(), namespace=name)
-        self.clients_archive = {name: client}
-        self.client = client
+        self.clients_archive : dict[str, NodeClient] = {name: client}
+        self.client : NodeClient = client
         self.name = name
 
     _set_name_argparser = Cmd2ArgumentParser(description='Changes client to new vehicle name.')
@@ -101,6 +122,13 @@ class ClientShell(Cmd):
 
     def sigint_handler(self, signum: int, _) -> None:
         cancel_futures = []
+        if not self.client._waiting_for_gh:
+            super().sigint_handler(signum, _)
+            return
+        if self.client.seconds - self.client._last_update_s > self.client._action_wait_timeout_s:
+            print(f"Goal handle not retrieved in {self.client._action_wait_timeout_s:.2f}. Ending call.")
+            super().sigint_handler(signum, _)
+            return
         if self.client._waiting_for_gh:
             print("Cannot cancel until goal is retrieved")
             return
@@ -177,24 +205,40 @@ def gh_state_machine(data):
 
 def complete_action_call(executor: Type[Executor], future):
     """Sends single action call."""
+    # def handle_signal(signal_number, frame):
+    #     goal_handle = future.result()
+    #     if goal_handle.accepted:
+    #         print("Action cancelled by user")
+    #         goal_handle.cancel_goal_async()
+    #     else:
+    #         print("can't cancel until future is accepted")
+    # signal.signal(signal.SIGINT, handle_signal)
+    if future is None:
+        return False
     data = {
         "future": future,
         "state": CompleteActionState.WAIT_GH,
     }
+    success = False
     while True:
         executor.spin_once()
         if "node" in data: data["node"].get_logger().info(f"Completing action call...", once=True)  # FIXME: this prevents a lockup issue for sweep search shell call, not sure why. it should be removed
         state = gh_state_machine(data)
         if state == CompleteActionState.SUCCEEDED:
             data["node"].get_logger().info(f"Succeeded at `{data['action_name']}`")
-            return True
+            success = True
+            break
         elif state == CompleteActionState.FAILURE:
             data["node"].get_logger().info(f"Failed at `{data['action_name']}` with result {data['goal_handle'].status}...")
-            return False
+            success = False
+            break
         elif state == CompleteActionState.CANCELED:
             data["node"].get_logger().info(f"Cancelled `{data['action_name']}`")
-            return True
+            success = True
+            break
         data["state"] = state
+    # signal.signal(signal.SIGINT, signal.SIG_DFL)
+    return success
 
 
 def check_futures_done(futures: List[Future]):

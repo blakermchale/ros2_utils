@@ -4,13 +4,13 @@ from launch import LaunchDescription, Action, LaunchContext
 from launch.actions import IncludeLaunchDescription, LogInfo
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch.actions import OpaqueFunction, DeclareLaunchArgument
+from launch.actions import OpaqueFunction, DeclareLaunchArgument, GroupAction
 from ament_index_python.packages import get_package_share_directory
 from launch_ros.parameter_descriptions import ParameterFile
+from launch_ros.actions import SetRemap, SetParameter
 from launch.substitutions import TextSubstitution
 
-
-from typing import List
+from typing import Any
 import ast
 import argparse
 import yaml
@@ -37,7 +37,7 @@ class LaunchManager(LaunchDescription):
         self.add_action(log)
         return log
     
-    def add_opaque_function(self, function, yaml_file="", **kwargs):
+    def add_opaque_function(self, function, yaml_file:str="", **kwargs):
         def helper(context: LaunchContext):
             # Read launch args from YAML
             yaml_args = {}
@@ -69,15 +69,15 @@ class LaunchManager(LaunchDescription):
         self.add_action(opaque_function)
         return opaque_function
 
-    def add_include_launch_description(self, package:str, launch_file:str, launch_arguments={}, **kwargs) -> IncludeLaunchDescription:
+    def add_include_launch_description(self, package:str, launch_file:str, launch_arguments:dict[str, str]={}, remappings:list[tuple[str,str]]=[], parameters:dict[str,Any]={}, **kwargs) -> IncludeLaunchDescription:
         """Adds IncludeLaunchDescription to launch manager. Simplifies launch include process and allows for propagation of arguments.
 
         Args:
-            package (str): _description_
-            launch_file (str): _description_
-            launch_arguments (dict, optional): Launch arguments to pass forward. Defaults to {}.
-            forward_arguments (bool, optional): Get arguments from passed launch file and add to current with namespace. Defaults to False.
-            namespace (str, optional): _description_. Defaults to "".
+            package (str): ROS package to look for launch.
+            launch_file (str): Name of launch file in ROS package.
+            launch_arguments launch_arguments (dict[str, str], optional): Launch arguments to pass to include. Defaults to {}.
+            remappings (list[tuple[str,str]], optional): Remapping rules to apply to all included nodes. Defaults to [].
+            parameters (dict[str,Any], optional): Parameters to pass to all nodes in launch file. Defaults to {}.
         """
         path = get_launch_file(package, launch_file)
         launch_description_source = PythonLaunchDescriptionSource(str(path))
@@ -91,10 +91,24 @@ class LaunchManager(LaunchDescription):
             launch_arguments=str_launch_args.items(),
             **kwargs
         )
-        self.add_action(include_action)
+        # Use group action to change nodes being included
+        group_action = []
+        if remappings:
+            for src, dst in remappings:
+                group_action.append(SetRemap(src, dst))
+        if parameters:
+            for name, value in parameters.items():
+                group_action.append(SetParameter(name, value))
+        final_action = include_action
+        if group_action:
+            group_action.append(include_action)
+            final_action = GroupAction(
+                group_action
+            )
+        self.add_action(final_action)
         return include_action
     
-    def add_include_launch_args(self, package: str, launch_file: str, exclude=[]) -> List[DeclareLaunchArgument]:
+    def add_include_launch_args(self, package: str, launch_file: str, exclude:list[str]=[]) -> list[DeclareLaunchArgument]:
         """Adds arguments from included launch file.
         
         This is separated from add_include_launch_description since args cannot be passed forward when in OpaqueFunction.
@@ -117,7 +131,7 @@ class LaunchManager(LaunchDescription):
         for action in actions:
             self.add_action(action)
     
-    def add_action_list(self, actions: List[Action]):
+    def add_action_list(self, actions: list[Action]):
         for action in actions:
             self.add_action(action)
 
@@ -136,18 +150,3 @@ def get_launch_file(package: str, launch_file: str) -> Path:
     if num_launches != 1:
         raise ValueError(f"Found {num_launches} multiple matching launch files in {package}. Expected 1.")
     return launch_files[0]
-
-
-def get_local_arguments(args: argparse.Namespace, context, yaml_file: str=""):
-    """Stores launch arguments in dictionary using RCL context."""
-    if yaml_file != "":
-        param_file = ParameterFile(
-            param_file=yaml_file,
-            allow_substs=True)
-        param_file_path = param_file.evaluate(context)
-        with open(param_file_path, 'r') as f:
-            config_vals = yaml.load(f, Loader=yaml.FullLoader)
-        # Overrides passed launch args with config files
-        for k, v in config_vals.items():
-            setattr(args, k, v)
-    return args
