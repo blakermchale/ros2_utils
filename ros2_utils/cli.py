@@ -41,7 +41,10 @@ class NodeClient(EzNode):
         self._executor = executor
         if add_to_executor:
             self._executor.add_node(self)  # TODO(bmchale): this causes client to be a string when called here, maybe we can find a workaround
-    
+
+    def __del__(self):
+        self._executor.remove_node(self)
+
     ########################
     ## Helpers
     ########################
@@ -106,6 +109,7 @@ class ClientShell(Cmd):
         self.clients_archive : dict[str, NodeClient] = {name: client}
         self.client : NodeClient = client
         self.name = name
+        signal.signal(signal.SIGINT, self.sigint_handler)
 
     _set_name_argparser = Cmd2ArgumentParser(description='Changes client to new vehicle name.')
     _set_name_argparser.add_argument('name', type=str, help='vehicle namespace')
@@ -122,9 +126,6 @@ class ClientShell(Cmd):
 
     def sigint_handler(self, signum: int, _) -> None:
         cancel_futures = []
-        if not self.client._waiting_for_gh:
-            super().sigint_handler(signum, _)
-            return
         if self.client.seconds - self.client._last_update_s > self.client._action_wait_timeout_s:
             print(f"Goal handle not retrieved in {self.client._action_wait_timeout_s:.2f}. Ending call.")
             super().sigint_handler(signum, _)
@@ -191,15 +192,22 @@ def gh_state_machine(data):
     elif state == CompleteActionState.WAIT_GH_FUTURE:
         if data.get("gh_future") is None: data["gh_future"] = data["goal_handle"].get_result_async()
         if data["gh_future"].done():
-            data["node"]._goal_handles.pop(data["action_name"])
+            node : NodeClient = data["node"]
+            action_name = data["action_name"]
+            if action_name in node._goal_handles:
+                node._goal_handles.pop(data["action_name"])
             return CompleteActionState.CHECK_STATUS
     elif state == CompleteActionState.CHECK_STATUS:
         if data["goal_handle"].status == GoalStatus.STATUS_SUCCEEDED:
             return CompleteActionState.SUCCEEDED
         elif data["goal_handle"].status == GoalStatus.STATUS_CANCELED:
             return CompleteActionState.CANCELED
-        elif data["goal_handle"].status == GoalStatus.STATUS_ABORTED:
+        elif data["goal_handle"].status in [GoalStatus.STATUS_ABORTED, GoalStatus.STATUS_UNKNOWN]:
             return CompleteActionState.FAILURE
+        elif data["goal_handle"].status in [GoalStatus.STATUS_CANCELING, GoalStatus.STATUS_EXECUTING, GoalStatus.STATUS_ACCEPTED]:
+            pass
+        else:
+            raise ValueError(f"Goal handle status is invalid")
     return state
 
 
