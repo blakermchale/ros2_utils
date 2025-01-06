@@ -81,6 +81,7 @@ def parse_model_file(file_path, mappings):
         tmp_path = file_path
     return tmp_path, robot_desc
 
+
 def combine_names(l: list, sep: str):
     l = list(filter(None, l))  # Remove empty strings
     return sep.join(l)
